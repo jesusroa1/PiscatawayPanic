@@ -267,18 +267,77 @@
       ctx.fillStyle = '#888';
       ctx.fillRect(0, GROUND_Y, W, 3);
 
-      // Simple building silhouettes
+      // Other building silhouettes
       ctx.fillStyle = '#111';
-      ctx.fillRect(0,  40, 25, GROUND_Y - 40);
       ctx.fillRect(30, 55, 20, GROUND_Y - 55);
       ctx.fillRect(110, 35, 30, GROUND_Y - 35);
       ctx.fillRect(145, 60, 15, GROUND_Y - 60);
 
-      // Windows (yellow lit)
+      // Other building windows (yellow lit)
       ctx.fillStyle = '#ffdd57';
-      [[4,48],[4,56],[12,48],[115,43],[115,53],[123,43],[123,53],[148,67]].forEach(([wx,wy]) => {
+      [[115,43],[115,53],[123,43],[123,53],[148,67]].forEach(([wx,wy]) => {
         ctx.fillRect(wx, wy, 4, 3);
       });
+
+      // --- Ice Cream Parlor (left side) ---
+      // Building body
+      ctx.fillStyle = '#0f0518';
+      ctx.fillRect(0, 44, 30, GROUND_Y - 44);
+
+      // Upper facade (slightly lighter)
+      ctx.fillStyle = '#1e0a2e';
+      ctx.fillRect(0, 44, 30, 16);
+
+      // Neon sign — pink with bright center
+      ctx.fillStyle = '#ff3c8e';
+      ctx.fillRect(1, 53, 28, 5);
+      ctx.fillStyle = '#ffcce5';
+      ctx.fillRect(2, 54, 26, 3);
+
+      // Awning — alternating pink/cream stripes (5px each)
+      for (let i = 0; i < 30; i++) {
+        ctx.fillStyle = (Math.floor(i / 5) % 2 === 0) ? '#d63384' : '#ffe4ef';
+        ctx.fillRect(i, 59, 1, 5);
+      }
+      ctx.fillStyle = '#a61e4d';
+      ctx.fillRect(0, 63, 30, 1); // awning bottom edge
+
+      // Storefront window (warm lit)
+      ctx.fillStyle = '#ffe8c8';
+      ctx.fillRect(2, 65, 16, 14);
+      ctx.fillStyle = '#fffbee';
+      ctx.fillRect(3, 66, 14, 12);
+
+      // Pink scoop cone in window
+      ctx.fillStyle = '#c68642';
+      ctx.fillRect(5, 72, 4, 6);   // wafer
+      ctx.fillStyle = '#ffb3c6';
+      ctx.fillRect(4, 67, 6, 5);   // pink scoop
+
+      // Mint scoop cone in window
+      ctx.fillStyle = '#c68642';
+      ctx.fillRect(13, 72, 4, 6);  // wafer
+      ctx.fillStyle = '#a8e6cf';
+      ctx.fillRect(12, 67, 6, 5);  // mint scoop
+
+      // Door (dark wood, pink trim, gold knob)
+      ctx.fillStyle = '#2c1a07';
+      ctx.fillRect(20, 72, 9, GROUND_Y - 72);
+      ctx.fillStyle = '#ff3c8e';
+      ctx.fillRect(20, 71, 9, 1);
+      ctx.fillStyle = '#ffd700';
+      ctx.fillRect(24, 80, 2, 2);
+
+      // Rooftop ice cream cone ornament
+      ctx.fillStyle = '#c68642';
+      ctx.fillRect(10, 42, 5, 2);  // cone base
+      ctx.fillRect(11, 40, 3, 2);  // cone mid
+      ctx.fillRect(12, 38, 1, 2);  // cone tip
+      ctx.fillStyle = '#ffb3c6';
+      ctx.fillRect(10, 34, 5, 5);  // scoop
+      ctx.fillRect(11, 33, 3, 1);  // scoop top
+      ctx.fillStyle = '#e63946';
+      ctx.fillRect(12, 32, 1, 1);  // cherry
     }
 
     // --- Game loop ---
