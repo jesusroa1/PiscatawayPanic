@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Piscataway Panic</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0a0a;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      overflow: hidden;
+      touch-action: none;
+    }
+    canvas {
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      border: 2px solid #333;
+    }
+    #controls {
+      display: flex;
+      width: 100%;
+      max-width: 480px;
+      margin-top: 8px;
+      gap: 8px;
+    }
+    .btn {
+      flex: 1;
+      padding: 20px;
+      background: #1a1a2e;
+      border: 2px solid #444;
+      color: #aaa;
+      font-family: monospace;
+      font-size: 24px;
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+      border-radius: 4px;
+      text-align: center;
+    }
+    .btn:active { background: #2a2a4e; border-color: #88f; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="controls">
+    <div class="btn" id="btnLeft">&#9664;</div>
+    <div class="btn" id="btnRight">&#9654;</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+
+    // Scale canvas to fit screen nicely
+    const SCALE = Math.min(Math.floor(window.innerWidth / 160), Math.floor((window.innerHeight - 80) / 120), 4);
+    const W = 160, H = 120;
+    canvas.width = W;
+    canvas.height = H;
+    canvas.style.width  = W * SCALE + 'px';
+    canvas.style.height = H * SCALE + 'px';
+
+    // Pixel size for sprite pixels
+    const PX = 2;
+
+    // --- Sprite pixel art (16x16 grid, each cell = PX px) ---
+    // Colors: 0=transparent, 1=skin, 2=hair, 3=shirt, 4=pants, 5=shoes
+    const PALETTE = ['', '#f5c99a', '#3b1f0e', '#e63946', '#457b9d', '#2b2b2b'];
+
+    const FRAMES = {
+      idle: [
+        [
+          '0022220000000000',
+          '0021110000000000',
+          '0021210000000000',
+          '0022220000000000',
+          '0033330000000000',
+          '3033303000000000',
+          '3033303000000000',
+          '0033330000000000',
+          '0044440000000000',
+          '0044440000000000',
+          '0044040000000000',
+          '0044040000000000',
+          '0055005000000000',
+          '0055005000000000',
+          '0000000000000000',
+          '0000000000000000',
+        ]
+      ],
+      walkR: [
+        // frame 1
+        [
+          '0022220000000000',
+          '0021110000000000',
+          '0021210000000000',
+          '0022220000000000',
+          '0033330000000000',
+          '3033303000000000',
+          '3033303000000000',
+          '0033330000000000',
+          '0044440000000000',
+          '0004400000000000',
+          '0404040000000000',
+          '0404000000000000',
+          '0055500000000000',
+          '0000500000000000',
+          '0000000000000000',
+          '0000000000000000',
+        ],
+        // frame 2
+        [
+          '0022220000000000',
+          '0021110000000000',
+          '0021210000000000',
+          '0022220000000000',
+          '0033330000000000',
+          '0303330000000000',
+          '0303330000000000',
+          '0033330000000000',
+          '0044440000000000',
+          '0440000000000000',
+          '0404040000000000',
+          '0004040000000000',
+          '0000550000000000',
+          '0000055000000000',
+          '0000000000000000',
+          '0000000000000000',
+        ]
+      ],
+      walkL: [
+        [
+          '0000000000000000',
+          '0000000000000000',
+          '0000000000000000',
+          '0000000000000000',
+          '0000000000000000',
+          '0000000000000000',
+          '0000000000000000',
+          '0000000000000000',
+          '0000000000000000',
+          '0000000000000000',
+          '0000000000000000',
+          '0000000000000000',
+          '0000000000000000',
+          '0000000000000000',
+          '0000000000000000',
+          '0000000000000000',
+        ]
+      ]
+    };
+
+    // Mirror walkR frames to make walkL
+    FRAMES.walkL = FRAMES.walkR.map(frame =>
+      frame.map(row => row.split('').reverse().join(''))
+    );
+
+    function drawSprite(frame, x, y) {
+      for (let row = 0; row < frame.length; row++) {
+        for (let col = 0; col < frame[row].length; col++) {
+          const c = parseInt(frame[row][col]);
+          if (c === 0) continue;
+          ctx.fillStyle = PALETTE[c];
+          ctx.fillRect(x + col * PX, y + row * PX, PX, PX);
+        }
+      }
+    }
+
+    // --- Game state ---
+    const GROUND_Y = H - 28;
+    const SPRITE_H = 16 * PX;
+    const SPEED = 1.2;
+
+    const player = {
+      x: W / 2 - 16,
+      y: GROUND_Y - SPRITE_H,
+      vx: 0,
+      facing: 'idle',
+      animFrame: 0,
+      animTimer: 0,
+      animSpeed: 10, // ticks per frame
+    };
+
+    // Input state
+    const keys = { left: false, right: false };
+
+    // Keyboard
+    document.addEventListener('keydown', e => {
+      if (e.key === 'ArrowLeft'  || e.key === 'a') keys.left  = true;
+      if (e.key === 'ArrowRight' || e.key === 'd') keys.right = true;
+    });
+    document.addEventListener('keyup', e => {
+      if (e.key === 'ArrowLeft'  || e.key === 'a') keys.left  = false;
+      if (e.key === 'ArrowRight' || e.key === 'd') keys.right = false;
+    });
+
+    // Touch buttons
+    function hold(el, key) {
+      el.addEventListener('touchstart', e => { e.preventDefault(); keys[key] = true;  }, { passive: false });
+      el.addEventListener('touchend',   e => { e.preventDefault(); keys[key] = false; }, { passive: false });
+      el.addEventListener('mousedown',  () => keys[key] = true);
+      el.addEventListener('mouseup',    () => keys[key] = false);
+      el.addEventListener('mouseleave', () => keys[key] = false);
+    }
+    hold(document.getElementById('btnLeft'),  'left');
+    hold(document.getElementById('btnRight'), 'right');
+
+    // --- Draw helpers ---
+    function drawBackground() {
+      // Sky
+      ctx.fillStyle = '#1a1a2e';
+      ctx.fillRect(0, 0, W, H);
+
+      // Moon
+      ctx.fillStyle = '#ffffcc';
+      ctx.fillRect(130, 8, 10, 10);
+      ctx.fillStyle = '#1a1a2e';
+      ctx.fillRect(133, 8, 5, 5); // crescent cut
+
+      // Stars (fixed positions)
+      ctx.fillStyle = '#ffffff';
+      [[10,5],[30,12],[55,4],[80,9],[100,3],[145,14],[20,18]].forEach(([sx,sy]) => {
+        ctx.fillRect(sx, sy, 1, 1);
+      });
+
+      // Ground
+      ctx.fillStyle = '#2d4a1e';
+      ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+
+      // Sidewalk stripe
+      ctx.fillStyle = '#888';
+      ctx.fillRect(0, GROUND_Y, W, 3);
+
+      // Simple building silhouettes
+      ctx.fillStyle = '#111';
+      ctx.fillRect(0,  40, 25, GROUND_Y - 40);
+      ctx.fillRect(30, 55, 20, GROUND_Y - 55);
+      ctx.fillRect(110, 35, 30, GROUND_Y - 35);
+      ctx.fillRect(145, 60, 15, GROUND_Y - 60);
+
+      // Windows (yellow lit)
+      ctx.fillStyle = '#ffdd57';
+      [[4,48],[4,56],[12,48],[115,43],[115,53],[123,43],[123,53],[148,67]].forEach(([wx,wy]) => {
+        ctx.fillRect(wx, wy, 4, 3);
+      });
+    }
+
+    // --- Game loop ---
+    let tick = 0;
+    function update() {
+      player.vx = 0;
+      if (keys.left)  player.vx = -SPEED;
+      if (keys.right) player.vx =  SPEED;
+
+      player.x += player.vx;
+      player.x = Math.max(0, Math.min(W - 16 * PX, player.x));
+
+      // Animation
+      if (player.vx > 0) player.facing = 'walkR';
+      else if (player.vx < 0) player.facing = 'walkL';
+      else player.facing = 'idle';
+
+      player.animTimer++;
+      if (player.animTimer >= player.animSpeed) {
+        player.animTimer = 0;
+        const frames = FRAMES[player.facing];
+        player.animFrame = (player.animFrame + 1) % frames.length;
+      }
+      // Reset frame index when switching animation
+      tick++;
+    }
+
+    function render() {
+      drawBackground();
+      const frames = FRAMES[player.facing];
+      drawSprite(frames[player.animFrame % frames.length], Math.round(player.x), Math.round(player.y));
+    }
+
+    function loop() {
+      update();
+      render();
+      requestAnimationFrame(loop);
+    }
+
+    loop();
+  </script>
+</body>
+</html>
