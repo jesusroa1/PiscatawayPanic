@@ -1,0 +1,52 @@
+name: Auto Create and Merge PR
+
+on:
+  push:
+    branches:
+      - 'claude/**'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create and merge PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Reuse existing open PR for this branch, or create one
+          existing=$(gh pr list \
+            --head "${{ github.ref_name }}" \
+            --base main \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')
+
+          if [ -n "$existing" ]; then
+            pr_number="$existing"
+          else
+            title=$(git log -1 --pretty=%s)
+            pr_number=$(gh pr create \
+              --base main \
+              --head "${{ github.ref_name }}" \
+              --title "$title" \
+              --body "Auto-merged from \`${{ github.ref_name }}\`" \
+              --json number \
+              --jq '.number')
+          fi
+
+          echo "PR #$pr_number — merging..."
+
+          # Retry up to 5 times while GitHub computes mergeability
+          for i in 1 2 3 4 5; do
+            gh pr merge "$pr_number" --squash --delete-branch && break
+            echo "Attempt $i failed, retrying in 10s..."
+            sleep 10
+          done
