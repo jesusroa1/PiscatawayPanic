@@ -298,6 +298,10 @@
         ctx.fillRect(sx, sy, 1, 1);
       });
 
+      // Deployment marker
+      ctx.fillStyle = '#ff0000';
+      ctx.fillRect(W - 10, 4, 6, 6);
+
       // Ground
       ctx.fillStyle = '#2d4a1e';
       ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
