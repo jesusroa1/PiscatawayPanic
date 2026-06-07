@@ -9,418 +9,819 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      background: #0a0a0a;
+      background: #000;
       display: flex;
-      flex-direction: column;
       align-items: center;
       justify-content: center;
+      width: 100vw;
       height: 100vh;
       overflow: hidden;
       touch-action: none;
-      gap: 6px;
-      padding: 4px;
     }
-    @keyframes glow {
-      0%, 100% {
-        text-shadow:
-          0 0 6px #ffdd57,
-          2px 2px 0 #e07b00,
-          4px 4px 0 #7a1c00;
-      }
-      50% {
-        text-shadow:
-          0 0 14px #ffdd57,
-          0 0 26px #ffaa00,
-          2px 2px 0 #e07b00,
-          4px 4px 0 #7a1c00;
-      }
-    }
-    @keyframes flicker {
-      0%, 89%, 91%, 93%, 100% { opacity: 1; }
-      90%, 92% { opacity: 0.6; }
-    }
-    #banner {
-      font-family: 'Press Start 2P', monospace;
-      font-size: clamp(9px, 3vw, 18px);
-      color: #ffdd57;
-      text-align: center;
-      white-space: nowrap;
-      padding: 2px 8px;
-      animation: glow 2.5s ease-in-out infinite, flicker 7s step-end infinite;
-      letter-spacing: 0.05em;
-    }
-    #game-area {
-      display: flex;
-      flex-direction: row;
-      align-items: stretch;
-      gap: 8px;
-    }
-    canvas {
-      image-rendering: pixelated;
-      image-rendering: crisp-edges;
-      border: 2px solid #333;
-      display: block;
-    }
-    .btn {
-      width: 64px;
-      background: #1a1a2e;
-      border: 2px solid #444;
-      color: #aaa;
-      font-family: monospace;
-      font-size: 24px;
-      cursor: pointer;
-      user-select: none;
-      -webkit-user-select: none;
-      border-radius: 4px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-    }
-    .btn:active { background: #2a2a4e; border-color: #88f; }
-    /* Portrait: canvas on top, buttons side-by-side below */
-    @media (orientation: portrait) {
-      body { padding: 8px; gap: 8px; }
-      #game-area {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        grid-template-rows: 1fr auto;
-        gap: 8px;
-        width: 100%;
-        flex: 1;
-        min-height: 0;
-      }
-      canvas { grid-column: 1 / 3; grid-row: 1; align-self: center; justify-self: center; }
-      #btnLeft  { grid-column: 1; grid-row: 2; width: 100%; height: 70px; }
-      #btnRight { grid-column: 2; grid-row: 2; width: 100%; height: 70px; }
-    }
+    canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
   </style>
 </head>
 <body>
-  <div id="banner">PISCATAWAY PANIC</div>
-  <div id="game-area">
-    <div class="btn" id="btnLeft">&#9664;</div>
-    <canvas id="game"></canvas>
-    <div class="btn" id="btnRight">&#9654;</div>
-  </div>
+<canvas id="game"></canvas>
+<script>
+// ── SETUP ────────────────────────────────────────────────────────────────
+const canvas = document.getElementById('game');
+const ctx    = canvas.getContext('2d');
+const LW = 320, LH = 180;
+canvas.width = LW; canvas.height = LH;
 
-  <script>
-    const canvas = document.getElementById('game');
-    const ctx = canvas.getContext('2d');
+let canvasRect = canvas.getBoundingClientRect();
+function resize() {
+  const s = Math.min(window.innerWidth / LW, window.innerHeight / LH);
+  canvas.style.width  = Math.floor(LW * s) + 'px';
+  canvas.style.height = Math.floor(LH * s) + 'px';
+  requestAnimationFrame(() => { canvasRect = canvas.getBoundingClientRect(); });
+}
+resize();
+window.addEventListener('resize', resize);
 
-    const W = 160, H = 120;
-    canvas.width = W;
-    canvas.height = H;
+function toLogical(cx, cy) {
+  return {
+    x: (cx - canvasRect.left) * (LW / canvasRect.width),
+    y: (cy - canvasRect.top)  * (LH / canvasRect.height),
+  };
+}
 
-    function resizeCanvas() {
-      const bannerEl = document.getElementById('banner');
-      const bannerH = bannerEl ? bannerEl.offsetHeight + 6 : 36; // height + gap
-      const isLandscape = window.innerWidth > window.innerHeight;
-      let scale;
-      if (isLandscape) {
-        // Column layout: banner on top, then [btn canvas btn] row
-        const availW = window.innerWidth  - (64 + 8) * 2 - 4 * 2;
-        const availH = window.innerHeight - 4 * 2 - bannerH;
-        scale = Math.max(1, Math.min(Math.floor(availW / W), Math.floor(availH / H)));
-      } else {
-        // Column layout: banner on top, then grid [canvas / buttons]
-        const availW = window.innerWidth  - 8 * 2;
-        const availH = window.innerHeight - 70 - 8 - 8 * 2 - bannerH;
-        scale = Math.max(1, Math.min(Math.floor(availW / W), Math.floor(availH / H)));
+// ── CONSTANTS ────────────────────────────────────────────────────────────
+const LEVEL_W    = 1280;
+const G_TOP      = 28;
+const G_BOT      = LH - 8;
+const P_SPEED    = 1.7;
+const PROJ_SPEED = 3.5;
+const CAKE_SPEED = 3.0;
+const SS_FIRE_CD = 20;
+const HEAT_GAIN  = 16;
+const HEAT_COOL  = 0.65;
+const OVERHEAT   = 100;
+const CAKE_CD    = 35;
+const MAX_CAKES  = 3;
+
+// ── STATE ─────────────────────────────────────────────────────────────────
+let state = 'title';
+let tick = 0, score = 0, camX = 0, touchSeen = false;
+
+const player = {
+  x: 55, y: LH / 2, angle: 0,
+  hp: 5, maxHp: 5,
+  heat: 0, fireCd: 0, iframes: 0,
+  cakes: 0, cakeCd: 0,
+};
+
+let projs = [], enemies = [], hazards = [], items = [], particles = [], spawnIdx = 0;
+
+// Spawn table — sorted by wx so trySpawn works correctly
+const SPAWNS = [
+  // ── Section 1: Petrucci's Parking Lot (tutorial) ──────────────────────
+  { wx: 148, type: 'cake_item' },          // funnel cake on the counter
+  { wx: 200, type: 'mower' },              // Lawnmower Guy — non-killable hazard
+  { wx: 220, type: 'dad' },               // Radioactive Dad
+  { wx: 280, type: 'dad',   wy: 85  },
+  { wx: 320, type: 'guard'              },  // Zombie Crossing Guard
+  { wx: 370, type: 'dad',   wy: 135 },
+
+  // ── Section 2: South Washington Ave ───────────────────────────────────
+  { wx: 510, type: 'goose'              },
+  { wx: 570, type: 'dad',   wy: 95  },
+  { wx: 630, type: 'goose', wy: 65  },
+  { wx: 690, type: 'dad',   wy: 135 },
+  { wx: 750, type: 'goose'              },
+  { wx: 820, type: 'dad',   wy: 100 },
+  { wx: 880, type: 'goose', wy: 145 },
+
+  // ── Section 3: Johnson Park Gate ──────────────────────────────────────
+  { wx: 1010, type: 'guard'             },  // Park ranger blocking gate
+  { wx: 1065, type: 'mom'               },  // Radioactive Mom — mini-boss
+];
+
+// ── INPUT ─────────────────────────────────────────────────────────────────
+const keys = {};
+document.addEventListener('keydown', e => { keys[e.key] = true;  });
+document.addEventListener('keyup',   e => { keys[e.key] = false; });
+
+const joy    = { active: false, id: -1, ox: 0, oy: 0, dx: 0, dy: 0 };
+const btnSS  = { active: false, id: -1 }; // soft serve
+const btnFC  = { active: false, id: -1 }; // funnel cake
+
+function onTouchStart(e) {
+  e.preventDefault();
+  touchSeen = true;
+  canvasRect = canvas.getBoundingClientRect();
+  for (const t of e.changedTouches) {
+    const p = toLogical(t.clientX, t.clientY);
+    if (state !== 'playing') { startGame(); return; }
+    if (p.x < LW / 2 && !joy.active) {
+      Object.assign(joy, { active: true, id: t.identifier, ox: p.x, oy: p.y, dx: 0, dy: 0 });
+    } else if (p.x >= LW / 2) {
+      // Top-right strip (y < 55) = cake button; rest = soft serve
+      if (p.y < 55 && player.cakes > 0 && !btnFC.active) {
+        btnFC.active = true; btnFC.id = t.identifier;
+      } else if (!btnSS.active) {
+        btnSS.active = true; btnSS.id = t.identifier;
       }
-      canvas.style.width  = W * scale + 'px';
-      canvas.style.height = H * scale + 'px';
+    }
+  }
+}
+function onTouchMove(e) {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (t.identifier !== joy.id) continue;
+    const p  = toLogical(t.clientX, t.clientY);
+    const dx = p.x - joy.ox, dy = p.y - joy.oy;
+    const r  = Math.hypot(dx, dy), max = 28;
+    joy.dx = r > max ? dx / r : dx / max;
+    joy.dy = r > max ? dy / r : dy / max;
+  }
+}
+function onTouchEnd(e) {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (t.identifier === joy.id)   { joy.active   = false; joy.dx = 0; joy.dy = 0; }
+    if (t.identifier === btnSS.id) { btnSS.active  = false; }
+    if (t.identifier === btnFC.id) { btnFC.active  = false; }
+  }
+}
+canvas.addEventListener('touchstart',  onTouchStart,  { passive: false });
+canvas.addEventListener('touchmove',   onTouchMove,   { passive: false });
+canvas.addEventListener('touchend',    onTouchEnd,    { passive: false });
+canvas.addEventListener('touchcancel', onTouchEnd,    { passive: false });
+canvas.addEventListener('pointerdown', () => { if (!touchSeen && state !== 'playing') startGame(); });
+
+// ── DRAW HELPERS ──────────────────────────────────────────────────────────
+function px(x, y, w, h, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(Math.round(x), Math.round(y), w, h);
+}
+
+// ── BACKGROUND ────────────────────────────────────────────────────────────
+function drawBg() {
+  // Afternoon sky
+  px(0, 0, LW, G_TOP, '#7ec8e3');
+
+  // Sun (fixed on screen, top-right)
+  ctx.fillStyle = '#ffee44';
+  ctx.beginPath();
+  ctx.arc(LW - 20, 14, 9, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Ground zones: parking lot → road → park grass
+  const z1 = Math.round(480  - camX); // end of Section 1 asphalt
+  const z2 = Math.round(950  - camX); // end of Section 2 road
+  if (z1 > 0)              px(0,             G_TOP, Math.min(z1, LW), LH - G_TOP, '#4a4a58');
+  if (z1 < LW && z2 > 0) { const rx = Math.max(0, z1); px(rx, G_TOP, Math.min(z2, LW) - rx, LH - G_TOP, '#3a3a4a'); }
+  if (z2 < LW)             px(Math.max(0, z2), G_TOP, LW, LH - G_TOP, '#2a5a18');
+
+  // Road centre dashes (Section 2)
+  const roadMid = G_TOP + (G_BOT - G_TOP) / 2;
+  for (let d = Math.max(480, Math.floor(camX / 24) * 24); d < Math.min(950, camX + LW); d += 24) {
+    const dsx = Math.round(d - camX);
+    if (dsx > -12 && dsx < LW) px(dsx, roadMid - 1, 12, 2, '#ffdd57');
+  }
+
+  // Sidewalk line
+  px(0, G_TOP, LW, 3, '#888899');
+
+  // Petrucci's building (world 0–120)
+  const bx = Math.round(-camX);
+  if (bx + 120 > 0 && bx < LW) drawPetruccis(bx);
+
+  // Parked cars in lot
+  for (const cwx of [300, 360, 425]) {
+    const csx = Math.round(cwx - camX);
+    if (csx > -32 && csx < LW + 10) drawCar(csx, G_TOP + 10);
+  }
+
+  // Park fence (world 945–1010)
+  for (let i = 0; i < 65; i += 9) {
+    const fx = Math.round(945 + i - camX);
+    if (fx > -6 && fx < LW) {
+      px(fx, G_TOP, 3, 22, '#7a5c1a');
+      px(fx, G_TOP + 7, 9, 2, '#7a5c1a');
+    }
+  }
+
+  // Park trees
+  for (const tx of [970, 1035, 1095, 1155, 1210]) {
+    const sx = Math.round(tx - camX);
+    if (sx > -22 && sx < LW + 22) drawTree(sx, G_TOP + 14);
+  }
+
+  // Park gate (world 1148)
+  const gx = Math.round(1148 - camX);
+  if (gx > -58 && gx < LW + 10) {
+    px(gx,      G_TOP, 5, 50, '#6b4a12');
+    px(gx + 50, G_TOP, 5, 50, '#6b4a12');
+    px(gx,      G_TOP, 55, 7, '#6b4a12');
+    ctx.fillStyle = '#fff';
+    ctx.font = '4px "Press Start 2P"';
+    ctx.textAlign = 'center';
+    ctx.fillText('PARK', gx + 27, G_TOP + 6);
+    ctx.textAlign = 'left';
+  }
+}
+
+function drawPetruccis(bx) {
+  px(bx, 0, 120, G_TOP + 2, '#0f0518');
+  px(bx, 0, 120, 16, '#1e0a2e');
+  px(bx + 4,  5, 82, 8, '#ff3c8e');
+  px(bx + 5,  6, 80, 6, '#ffcce5');
+  ctx.fillStyle = '#880033';
+  ctx.font = '4px "Press Start 2P"';
+  ctx.fillText('ICE CREAM', bx + 7, 12);
+  for (let i = 0; i < 120; i++) {
+    ctx.fillStyle = Math.floor(i / 6) % 2 === 0 ? '#d63384' : '#ffe4ef';
+    ctx.fillRect(bx + i, 15, 1, 9);
+  }
+  px(bx, 24, 120, 2, '#a61e4d');
+  px(bx + 5,  26, 30, 12, '#fffbee'); // window
+  px(bx + 9,  26,  8,  7, '#ffb3c6'); // pink scoop
+  px(bx + 11, 33,  4,  5, '#c68642');
+  px(bx + 20, 26,  8,  7, '#a8e6cf'); // mint scoop
+  px(bx + 22, 33,  4,  5, '#c68642');
+  px(bx + 75, 26, 18, G_TOP - 26, '#2c1a07'); // door
+  px(bx + 83, 30,  3,  3, '#ffd700'); // knob
+  px(bx + 52, -1,  6,  2, '#c68642'); // roof cone
+  px(bx + 53, -4,  4,  3, '#c68642');
+  px(bx + 54, -8,  2,  4, '#c68642');
+  px(bx + 51,-13,  8,  6, '#ffb3c6');
+  px(bx + 54,-15,  2,  2, '#e63946');
+}
+
+function drawCar(sx, sy) {
+  // Simple top-down parked car
+  const cols = ['#883322','#225588','#228844','#664488'];
+  const c = cols[Math.floor((sx + camX) / 65) % 4];
+  px(sx - 14, sy + 4, 28, 10, c);
+  px(sx - 10, sy,     20,  8, c);
+  px(sx - 13, sy + 12, 6, 4, '#222');
+  px(sx +  7, sy + 12, 6, 4, '#222');
+}
+
+function drawTree(sx, sy) {
+  px(sx - 2, sy + 9, 4, 16, '#6b4a12');
+  ctx.fillStyle = '#1a5c1a';
+  ctx.beginPath(); ctx.arc(sx, sy + 6, 10, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#236823';
+  ctx.beginPath(); ctx.arc(sx, sy + 4,  6, 0, Math.PI * 2); ctx.fill();
+}
+
+// ── ENTITY DRAWING ────────────────────────────────────────────────────────
+function drawPlayer() {
+  if (player.iframes > 0 && Math.floor(player.iframes / 5) % 2) return;
+  const sx = Math.round(player.x - camX), sy = Math.round(player.y);
+  ctx.save();
+  ctx.translate(sx, sy);
+  ctx.rotate(player.angle);
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.fillRect(-5, 4, 10, 5);
+  px(-5, -6, 10, 10, '#00aa44'); // body
+  px(-3,-12,  7,  7, '#f5c99a'); // head
+  px(-3,-15,  7,  4, '#3b1f0e'); // hair
+  px( 4, -2, 11,  4, '#777777'); // cannon
+  px(14, -2,  3,  4, '#ffccee'); // nozzle
+  px(-4,  4,  4,  6, '#225588'); // legs
+  px( 1,  4,  4,  6, '#225588');
+  ctx.restore();
+}
+
+function drawEnemy(e) {
+  const sx = Math.round(e.wx - camX), sy = Math.round(e.y);
+  if (sx < -22 || sx > LW + 22) return;
+  const fr = e.frozenTimer > 0;
+  ctx.save();
+  ctx.translate(sx, sy);
+
+  if (e.type === 'dad') {
+    // Radioactive Dad — wide body, Costco polo (orange-red), khaki pants
+    ctx.fillStyle = fr ? 'rgba(80,150,255,0.15)' : 'rgba(0,255,80,0.12)';
+    ctx.fillRect(-10, -12, 20, 24);
+    const body = fr ? '#3366bb' : '#cc4400';
+    const leg  = fr ? '#334466' : '#aa9955';
+    px(-7, -5, 14, 11, body);                     // wide polo body
+    px(-4,-11,  9,  7, fr ? '#88aacc' : '#f5c99a'); // head
+    ctx.fillStyle = fr ? '#88ccff' : '#00ff44';
+    ctx.fillRect(-2, -10, 2, 2); ctx.fillRect(3, -10, 2, 2); // eyes
+    px(-6, 6, 6, 7, leg); px(1, 6, 6, 7, leg);   // khaki pants
+
+    if (e.chargeState === 'warn') {
+      // Telegraph: arms spread wide, flashing
+      if (Math.floor(tick / 6) % 2 === 0) {
+        px(-14, -3, 7, 3, body); px(7, -3, 7, 3, body);
+      }
+    } else {
+      const a = Math.sin(tick * 0.2 + e.wx * 0.04) * 2;
+      px(-10, -2 + a, 3, 7, body); px(7, -2 - a, 3, 7, body);
     }
 
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
+  } else if (e.type === 'guard') {
+    // Zombie Crossing Guard — orange safety vest, stop sign
+    ctx.fillStyle = fr ? 'rgba(80,150,255,0.15)' : 'rgba(0,255,80,0.12)';
+    ctx.fillRect(-8, -11, 16, 22);
+    const vest = fr ? '#3355aa' : '#ff6600';
+    const leg  = fr ? '#1133aa' : '#224488';
+    px(-4, -5, 8, 10, vest);
+    px(-3,-10, 7,  6, fr ? '#88aacc' : '#d4a070'); // head
+    ctx.fillStyle = fr ? '#88ccff' : '#00ff44';
+    ctx.fillRect(-1, -9, 2, 2); ctx.fillRect(3, -9, 2, 2);
+    px(-4, 5, 4, 7, leg); px(1, 5, 4, 7, leg);
+    // Stop sign (held to right)
+    px(5, -10, 9, 9, '#cc1111');
+    px(7,  -8, 5, 5, '#ffffff');
 
-    // Pixel size for sprite pixels
-    const PX = 2;
+  } else if (e.type === 'goose') {
+    // Canada goose
+    const bc = fr ? '#aaddff' : '#eeeeee';
+    px(-7, -3, 14, 7, bc);
+    px(-9, -8,  6, 7, fr ? '#2244aa' : '#111');
+    px(-13,-6,  5, 2, fr ? '#4477aa' : '#ff8800');
+    ctx.fillStyle = fr ? '#88ccff' : '#ff2222';
+    ctx.fillRect(-7, -7, 2, 2);
+    const f = Math.abs(Math.sin(tick * 0.35 + e.wx * 0.04)) * 3;
+    px(-7, -3 - f, 14, 2, '#ddd');
+    px(-7,  4 + f, 14, 2, '#ddd');
 
-    // --- Sprite pixel art (16x16 grid, each cell = PX px) ---
-    // Colors: 0=transparent, 1=skin, 2=hair, 3=shirt, 4=pants, 5=shoes
-    const PALETTE = ['', '#f5c99a', '#3b1f0e', '#00cc66', '#e07b00', '#2b2b2b'];
+  } else if (e.type === 'mom') {
+    // Radioactive Mom — pink top, pushing stroller toward player
+    const stDir = player.x < e.wx ? -1 : 1; // stroller between mom and player
+    const stX   = stDir * 12;
+    ctx.fillStyle = fr ? 'rgba(80,150,255,0.15)' : 'rgba(255,120,200,0.15)';
+    ctx.fillRect(-14, -13, 30, 28);
+    // Stroller (visual — in front of mom)
+    px(stX - 6, -5, 12,  9, '#999');
+    px(stX - 5, -6, 10,  5, '#bbb'); // hood
+    px(stX - 5,  4,  4,  3, '#444'); // wheels
+    px(stX + 1,  4,  4,  3, '#444');
+    px(stX - 2, -3,  4,  4, '#f5c99a'); // baby head (tiny)
+    // Mom body
+    const top = fr ? '#6644aa' : '#cc44aa';
+    const leg = fr ? '#3355aa' : '#994488';
+    px(-6, -6, 10, 11, top);
+    px(-4,-12,  8,  7, fr ? '#88aacc' : '#f5c99a');
+    ctx.fillStyle = fr ? '#88ccff' : '#00ff44';
+    ctx.fillRect(-2,-11, 2, 2); ctx.fillRect(2,-11, 2, 2);
+    px(-5, 5, 4, 7, leg); px(0, 5, 4, 7, leg);
+  }
 
-    const FRAMES = {
-      idle: [
-        [
-          '0022220000000000',
-          '0021110000000000',
-          '0021210000000000',
-          '0022220000000000',
-          '0033330000000000',
-          '3033303000000000',
-          '3033303000000000',
-          '0033330000000000',
-          '0044440000000000',
-          '0044440000000000',
-          '0044040000000000',
-          '0044040000000000',
-          '0055005000000000',
-          '0055005000000000',
-          '0000000000000000',
-          '0000000000000000',
-        ]
-      ],
-      walkR: [
-        // frame 1
-        [
-          '0022220000000000',
-          '0021110000000000',
-          '0021210000000000',
-          '0022220000000000',
-          '0033330000000000',
-          '3033303000000000',
-          '3033303000000000',
-          '0033330000000000',
-          '0044440000000000',
-          '0004400000000000',
-          '0404040000000000',
-          '0404000000000000',
-          '0055500000000000',
-          '0000500000000000',
-          '0000000000000000',
-          '0000000000000000',
-        ],
-        // frame 2
-        [
-          '0022220000000000',
-          '0021110000000000',
-          '0021210000000000',
-          '0022220000000000',
-          '0033330000000000',
-          '0303330000000000',
-          '0303330000000000',
-          '0033330000000000',
-          '0044440000000000',
-          '0440000000000000',
-          '0404040000000000',
-          '0004040000000000',
-          '0000550000000000',
-          '0000055000000000',
-          '0000000000000000',
-          '0000000000000000',
-        ]
-      ],
-      walkL: [
-        [
-          '0000000000000000',
-          '0000000000000000',
-          '0000000000000000',
-          '0000000000000000',
-          '0000000000000000',
-          '0000000000000000',
-          '0000000000000000',
-          '0000000000000000',
-          '0000000000000000',
-          '0000000000000000',
-          '0000000000000000',
-          '0000000000000000',
-          '0000000000000000',
-          '0000000000000000',
-          '0000000000000000',
-          '0000000000000000',
-        ]
-      ]
-    };
+  // HP bar (only when damaged)
+  if (e.hp < e.maxHp) {
+    const bw = e.type === 'mom' ? 26 : 14;
+    px(-bw/2, -18, bw, 2, '#440000');
+    px(-bw/2, -18, Math.round(bw * e.hp / e.maxHp), 2, e.type === 'mom' ? '#ff55bb' : '#00ff44');
+  }
 
-    // Mirror walkR frames to make walkL
-    FRAMES.walkL = FRAMES.walkR.map(frame =>
-      frame.map(row => row.split('').reverse().join(''))
-    );
+  ctx.restore();
 
-    function drawSprite(frame, x, y) {
-      for (let row = 0; row < frame.length; row++) {
-        for (let col = 0; col < frame[row].length; col++) {
-          const c = parseInt(frame[row][col]);
-          if (c === 0) continue;
-          ctx.fillStyle = PALETTE[c];
-          ctx.fillRect(x + col * PX, y + row * PX, PX, PX);
+  // Stop sign "S" text (drawn outside translate to keep it upright)
+  if (e.type === 'guard' && !fr) {
+    ctx.fillStyle = '#cc1111';
+    ctx.font = '4px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('S', sx + 10, sy - 4);
+    ctx.textAlign = 'left';
+  }
+}
+
+function drawHazard(h) {
+  if (h.type !== 'mower') return;
+  const sx = Math.round(h.wx - camX), sy = Math.round(h.y);
+  if (sx < -30 || sx > LW + 30) return;
+  // Mower body
+  px(sx - 14, sy + 2, 28, 10, '#228822');
+  px(sx - 12, sy + 10, 7, 4, '#111');
+  px(sx + 5,  sy + 10, 7, 4, '#111');
+  // Rider
+  px(sx - 4,  sy - 6, 8, 8, '#cc4400'); // orange polo (he's also glowing)
+  px(sx - 2,  sy -12, 5, 6, '#f5c99a'); // head
+  // Exhaust puff
+  if (Math.floor(tick / 8) % 2 === 0) {
+    ctx.fillStyle = 'rgba(160,160,160,0.45)';
+    const ex = h.vx > 0 ? sx - 18 : sx + 14;
+    ctx.fillRect(ex, sy + 5, 4, 3);
+  }
+}
+
+function drawItem(item) {
+  if (item.collected) return;
+  const sx = Math.round(item.wx - camX), sy = Math.round(item.y);
+  if (sx < -12 || sx > LW + 12) return;
+  if (item.type === 'cake') {
+    // Funnel cake disc
+    ctx.fillStyle = '#c8842a';
+    ctx.beginPath(); ctx.ellipse(sx, sy, 8, 5, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#f5dda0';
+    ctx.beginPath(); ctx.ellipse(sx, sy, 5, 3, 0, 0, Math.PI * 2); ctx.fill();
+    px(sx - 4, sy - 1, 8, 1, 'rgba(255,255,255,0.6)'); // sugar drizzle
+    const bob = Math.sin(tick * 0.08) * 2;
+    ctx.fillStyle = '#ffdd57';
+    ctx.font = '4px "Press Start 2P"';
+    ctx.textAlign = 'center';
+    ctx.fillText('FC', sx, sy - 8 + bob);
+    ctx.textAlign = 'left';
+  }
+}
+
+function drawProjectile(p) {
+  const sx = Math.round(p.wx - camX);
+  if (sx < -10 || sx > LW + 10) return;
+  if (p.ptype === 'cake') {
+    ctx.save();
+    ctx.translate(sx, Math.round(p.y));
+    ctx.rotate(tick * 0.3);
+    px(-5, -2, 10, 4, '#c8842a');
+    px(-3, -1,  6, 2, '#f5dda0');
+    ctx.restore();
+  } else {
+    px(sx - 3, Math.round(p.y) - 3, 7, 7, '#ffb3c6');
+    px(sx - 1, Math.round(p.y) - 1, 3, 3, '#ffffff');
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    const sx = Math.round(p.wx - camX);
+    if (sx < -8 || sx > LW + 8) continue;
+    ctx.globalAlpha = p.life / p.maxLife;
+    ctx.fillStyle = p.color;
+    const s = Math.ceil(p.size);
+    ctx.fillRect(Math.round(sx - s / 2), Math.round(p.y - s / 2), s, s);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ── HUD ───────────────────────────────────────────────────────────────────
+function drawHUD() {
+  px(0, 0, LW, 16, 'rgba(0,0,0,0.68)');
+
+  // Hearts
+  for (let i = 0; i < player.maxHp; i++) {
+    ctx.fillStyle = i < player.hp ? '#ff4466' : '#442233';
+    ctx.font = '8px "Press Start 2P"';
+    ctx.fillText('♥', 3 + i * 12, 13);
+  }
+
+  // Score
+  ctx.fillStyle = '#ffdd57';
+  ctx.font = '5px "Press Start 2P"';
+  ctx.textAlign = 'center';
+  ctx.fillText('SCORE ' + String(score).padStart(5, '0'), LW / 2, 11);
+  ctx.textAlign = 'left';
+
+  // Heat bar
+  px(LW - 60, 3, 56, 10, '#1a1a1a');
+  const hr = player.heat / OVERHEAT;
+  const hc = player.heat >= OVERHEAT ? '#ff2200' : hr > 0.6 ? '#ff8800' : '#44ccff';
+  px(LW - 60, 3, Math.round(56 * hr), 10, hc);
+  ctx.fillStyle = '#fff';
+  ctx.font = '3px "Press Start 2P"';
+  ctx.fillText(player.heat >= OVERHEAT ? 'OVERHEAT' : 'HEAT', LW - 58, 10);
+
+  // Funnel cake count
+  if (player.cakes > 0) {
+    ctx.fillStyle = '#c8842a';
+    ctx.font = '4px "Press Start 2P"';
+    ctx.fillText('CAKE x' + player.cakes, LW - 58, 24);
+  }
+
+  // Touch overlays
+  if (touchSeen) {
+    // Left: joystick zone
+    ctx.fillStyle = 'rgba(255,255,255,0.04)';
+    ctx.fillRect(0, LH - 70, LW / 2, 70);
+
+    // Right lower: soft serve fire zone
+    ctx.fillStyle = btnSS.active ? 'rgba(255,80,80,0.22)' : 'rgba(255,80,80,0.07)';
+    ctx.fillRect(LW / 2, LH - 70, LW / 2, 70);
+    ctx.fillStyle = 'rgba(255,200,200,0.6)';
+    ctx.font = '5px "Press Start 2P"';
+    ctx.textAlign = 'center';
+    ctx.fillText('FIRE', LW * 3 / 4, LH - 8);
+
+    // Right top: cake button (only visible when player has cakes)
+    if (player.cakes > 0) {
+      ctx.fillStyle = btnFC.active ? 'rgba(200,132,42,0.5)' : 'rgba(200,132,42,0.2)';
+      ctx.fillRect(LW / 2, 16, LW / 2, 38);
+      ctx.fillStyle = '#f5dda0';
+      ctx.fillText('CAKE', LW * 3 / 4, 38);
+    }
+    ctx.textAlign = 'left';
+
+    // Joystick
+    if (joy.active) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+      ctx.lineWidth   = 1.5;
+      ctx.beginPath(); ctx.arc(joy.ox, joy.oy, 24, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.28)';
+      ctx.beginPath(); ctx.arc(joy.ox + joy.dx * 24, joy.oy + joy.dy * 24, 11, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+}
+
+// ── OVERLAYS ──────────────────────────────────────────────────────────────
+function drawTitle() {
+  ctx.fillStyle = '#0a1828'; ctx.fillRect(0, 0, LW, LH);
+  ctx.fillStyle = 'rgba(0,255,80,0.03)'; ctx.fillRect(0, 0, LW, LH);
+  ctx.textAlign = 'center';
+  ctx.shadowColor = '#ffaa00'; ctx.shadowBlur = 10;
+  ctx.fillStyle = '#ffdd57'; ctx.font = '12px "Press Start 2P"';
+  ctx.fillText('PISCATAWAY', LW / 2, 45);
+  ctx.fillText('PANIC',      LW / 2, 63);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#00ff66'; ctx.font = '20px "Press Start 2P"';
+  ctx.fillText('☢', LW / 2, 95);
+  ctx.fillStyle = '#aaffaa'; ctx.font = '4px "Press Start 2P"';
+  ctx.fillText('LEVEL 1: TWO SCOOPS, NO WAITING', LW / 2, 113);
+  ctx.fillStyle = '#555'; ctx.font = '4px "Press Start 2P"';
+  ctx.fillText('WASD + SPACE/F  OR  TOUCH', LW / 2, 128);
+  if (Math.floor(tick / 28) % 2 === 0) {
+    ctx.fillStyle = '#fff'; ctx.font = '5px "Press Start 2P"';
+    ctx.fillText('TAP OR CLICK TO START', LW / 2, 154);
+  }
+  ctx.textAlign = 'left';
+}
+
+function drawOverlay(lines, colors) {
+  ctx.fillStyle = 'rgba(0,0,0,0.74)'; ctx.fillRect(0, 0, LW, LH);
+  ctx.textAlign = 'center';
+  let y = LH / 2 - (lines.length * 16) / 2 + 8;
+  lines.forEach((ln, i) => {
+    ctx.fillStyle = colors[i] || '#fff';
+    ctx.font = (i === 0 ? '10' : '5') + 'px "Press Start 2P"';
+    ctx.fillText(ln, LW / 2, y);
+    y += i === 0 ? 20 : 14;
+  });
+  if (Math.floor(tick / 28) % 2 === 0) {
+    ctx.fillStyle = '#fff'; ctx.font = '5px "Press Start 2P"';
+    ctx.fillText('TAP TO CONTINUE', LW / 2, y + 10);
+  }
+  ctx.textAlign = 'left';
+}
+
+// ── GAME LOGIC ────────────────────────────────────────────────────────────
+function splat(wx, y, n = 6, cols = ['#ffb3c6', '#ffffff', '#ff88aa']) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2, s = 0.5 + Math.random() * 1.8;
+    particles.push({
+      wx, y,
+      vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+      color: cols[Math.floor(Math.random() * cols.length)],
+      size: 2 + Math.random() * 3,
+      life: 18 + Math.random() * 22, maxLife: 40,
+    });
+  }
+}
+
+function trySpawn() {
+  while (spawnIdx < SPAWNS.length) {
+    const s = SPAWNS[spawnIdx];
+    if (s.wx > camX + LW + 60) break;
+    const y = s.wy ?? (G_TOP + 28 + Math.random() * (G_BOT - G_TOP - 40));
+
+    if (s.type === 'cake_item') {
+      items.push({ type: 'cake', wx: s.wx, y: G_TOP + 20, collected: false });
+    } else if (s.type === 'mower') {
+      hazards.push({ type: 'mower', wx: s.wx, y: G_TOP + 35, vx: 1.4, minWx: 155, maxWx: 420 });
+    } else {
+      const cfg = {
+        dad:   { hp: 3, maxHp: 3, speed: 0.5, score: 150, chargeState: 'patrol', warnTimer: 0, chargeTimer: 0, chargeVx: 0, chargeVy: 0 },
+        guard: { hp: 2, maxHp: 2, speed: 0.38, score: 100, patrolOrigin: s.wx, patrolDir: 1 },
+        goose: { hp: 2, maxHp: 2, speed: 1.1,  score: 150 },
+        mom:   { hp: 9, maxHp: 9, speed: 0.5,  score: 500, chargeState: 'patrol', warnTimer: 0, chargeTimer: 0, chargeVx: 0, chargeVy: 0 },
+      }[s.type];
+      if (cfg) enemies.push({ wx: s.wx, y, type: s.type, frozenTimer: 0, ...cfg });
+    }
+    spawnIdx++;
+  }
+}
+
+function update() {
+  tick++;
+  if (state !== 'playing') return;
+
+  // ── Movement ─────────────────────────────────────────────────────────
+  let mx = 0, my = 0;
+  if (keys['ArrowLeft']  || keys['a']) mx -= 1;
+  if (keys['ArrowRight'] || keys['d']) mx += 1;
+  if (keys['ArrowUp']    || keys['w']) my -= 1;
+  if (keys['ArrowDown']  || keys['s']) my += 1;
+  if (joy.active) { mx += joy.dx; my += joy.dy; }
+  const ml = Math.hypot(mx, my);
+  if (ml > 1) { mx /= ml; my /= ml; }
+  player.x = Math.max(10, Math.min(LEVEL_W - 10, player.x + mx * P_SPEED));
+  player.y = Math.max(G_TOP + 8, Math.min(G_BOT - 8, player.y + my * P_SPEED));
+
+  // ── Aim & fire angle ──────────────────────────────────────────────────
+  let nearest = null, nearestD = Infinity;
+  for (const e of enemies) {
+    const d = Math.hypot(e.wx - player.x, e.y - player.y);
+    if (d < nearestD) { nearestD = d; nearest = e; }
+  }
+  if (ml > 0.15)      player.angle = Math.atan2(my, mx);
+  else if (nearest)   player.angle = Math.atan2(nearest.y - player.y, nearest.wx - player.x);
+  const fa = nearest
+    ? Math.atan2(nearest.y - player.y, nearest.wx - player.x)
+    : player.angle;
+
+  // ── Soft serve fire ───────────────────────────────────────────────────
+  const wantSS = keys[' '] || keys['z'] || keys['x'] || btnSS.active;
+  if (wantSS && player.heat < OVERHEAT && player.fireCd <= 0) {
+    projs.push({ ptype: 'softserve',
+      wx: player.x + Math.cos(fa) * 15, y: player.y + Math.sin(fa) * 15,
+      vx: Math.cos(fa) * PROJ_SPEED,    vy: Math.sin(fa) * PROJ_SPEED, life: 85 });
+    player.heat  = Math.min(OVERHEAT, player.heat + HEAT_GAIN);
+    player.fireCd = SS_FIRE_CD;
+  }
+
+  // ── Funnel cake throw ─────────────────────────────────────────────────
+  const wantFC = (keys['f'] || keys['F'] || btnFC.active) && player.cakes > 0;
+  if (wantFC && player.cakeCd <= 0) {
+    projs.push({ ptype: 'cake',
+      wx: player.x + Math.cos(fa) * 15, y: player.y + Math.sin(fa) * 15,
+      vx: Math.cos(fa) * CAKE_SPEED,    vy: Math.sin(fa) * CAKE_SPEED, life: 110 });
+    player.cakes--;
+    player.cakeCd = CAKE_CD;
+  }
+
+  if (player.fireCd  > 0) player.fireCd--;
+  if (player.cakeCd  > 0) player.cakeCd--;
+  player.heat = Math.max(0, player.heat - HEAT_COOL);
+  if (player.iframes > 0) player.iframes--;
+
+  // ── Camera ────────────────────────────────────────────────────────────
+  camX = Math.max(0, Math.min(LEVEL_W - LW, player.x - LW / 3));
+  if (player.x > 1158) { state = 'win'; return; }
+
+  trySpawn();
+
+  // ── Item pickup ───────────────────────────────────────────────────────
+  for (const item of items) {
+    if (item.collected) continue;
+    if (Math.abs(player.x - item.wx) < 16 && Math.abs(player.y - item.y) < 16) {
+      item.collected = true;
+      player.cakes = Math.min(MAX_CAKES, player.cakes + 3);
+      splat(item.wx, item.y, 8, ['#c8842a', '#f5dda0', '#fff']);
+    }
+  }
+
+  // ── Projectiles ───────────────────────────────────────────────────────
+  for (let i = projs.length - 1; i >= 0; i--) {
+    const p = projs[i];
+    p.wx += p.vx; p.y += p.vy; p.life--;
+    if (p.life <= 0 || p.wx < 0 || p.wx > LEVEL_W) { projs.splice(i, 1); continue; }
+
+    let hit = false;
+    for (let j = enemies.length - 1; j >= 0; j--) {
+      const e = enemies[j];
+      // Mom's stroller zone blocks projectiles (stroller is between her and player)
+      if (e.type === 'mom') {
+        const stDir  = player.x < e.wx ? -1 : 1;
+        const stWx   = e.wx + stDir * 12;
+        if (Math.abs(p.wx - stWx) < 9 && Math.abs(p.y - e.y) < 9) {
+          // Deflect — splat on stroller, no damage
+          splat(stWx, e.y, 4, ['#aaaaaa', '#ffffff']);
+          projs.splice(i, 1); hit = true; break;
         }
       }
-    }
-
-    // --- Game state ---
-    const GROUND_Y = H - 28;
-    const SPRITE_H = 16 * PX;
-    const SPEED = 1.2;
-
-    const player = {
-      x: W / 2 - 16,
-      y: GROUND_Y - SPRITE_H,
-      vx: 0,
-      facing: 'idle',
-      animFrame: 0,
-      animTimer: 0,
-      animSpeed: 10, // ticks per frame
-    };
-
-    // Input state
-    const keys = { left: false, right: false };
-
-    // Keyboard
-    document.addEventListener('keydown', e => {
-      if (e.key === 'ArrowLeft'  || e.key === 'a') keys.left  = true;
-      if (e.key === 'ArrowRight' || e.key === 'd') keys.right = true;
-    });
-    document.addEventListener('keyup', e => {
-      if (e.key === 'ArrowLeft'  || e.key === 'a') keys.left  = false;
-      if (e.key === 'ArrowRight' || e.key === 'd') keys.right = false;
-    });
-
-    // Touch buttons
-    function hold(el, key) {
-      el.addEventListener('touchstart', e => { e.preventDefault(); keys[key] = true;  }, { passive: false });
-      el.addEventListener('touchend',   e => { e.preventDefault(); keys[key] = false; }, { passive: false });
-      el.addEventListener('mousedown',  () => keys[key] = true);
-      el.addEventListener('mouseup',    () => keys[key] = false);
-      el.addEventListener('mouseleave', () => keys[key] = false);
-    }
-    hold(document.getElementById('btnLeft'),  'left');
-    hold(document.getElementById('btnRight'), 'right');
-
-    // --- Draw helpers ---
-    function drawBackground() {
-      // Sky
-      ctx.fillStyle = '#0d1b3e';
-      ctx.fillRect(0, 0, W, H);
-
-      // Moon
-      ctx.fillStyle = '#00ff44';
-      ctx.fillRect(130, 8, 10, 10);
-      ctx.fillStyle = '#1a1a2e';
-      ctx.fillRect(133, 8, 5, 5); // crescent cut
-
-      // Stars (fixed positions)
-      ctx.fillStyle = '#ffffff';
-      [[10,5],[30,12],[55,4],[80,9],[100,3],[145,14],[20,18]].forEach(([sx,sy]) => {
-        ctx.fillRect(sx, sy, 1, 1);
-      });
-
-      // Deployment marker
-      ctx.fillStyle = '#ff0000';
-      ctx.fillRect(W - 10, 4, 6, 6);
-
-      // Ground
-      ctx.fillStyle = '#2d4a1e';
-      ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
-
-      // Sidewalk stripe
-      ctx.fillStyle = '#888';
-      ctx.fillRect(0, GROUND_Y, W, 3);
-
-      // Other building silhouettes
-      ctx.fillStyle = '#111';
-      ctx.fillRect(30, 55, 20, GROUND_Y - 55);
-      ctx.fillRect(110, 35, 30, GROUND_Y - 35);
-      ctx.fillRect(145, 60, 15, GROUND_Y - 60);
-
-      // Other building windows (yellow lit)
-      ctx.fillStyle = '#ffdd57';
-      [[115,43],[115,53],[123,43],[123,53],[148,67]].forEach(([wx,wy]) => {
-        ctx.fillRect(wx, wy, 4, 3);
-      });
-
-      // --- Ice Cream Parlor (left side) ---
-      // Building body
-      ctx.fillStyle = '#0f0518';
-      ctx.fillRect(0, 44, 30, GROUND_Y - 44);
-
-      // Upper facade (slightly lighter)
-      ctx.fillStyle = '#1e0a2e';
-      ctx.fillRect(0, 44, 30, 16);
-
-      // Neon sign — pink with bright center
-      ctx.fillStyle = '#ff3c8e';
-      ctx.fillRect(1, 53, 28, 5);
-      ctx.fillStyle = '#ffcce5';
-      ctx.fillRect(2, 54, 26, 3);
-
-      // Awning — alternating pink/cream stripes (5px each)
-      for (let i = 0; i < 30; i++) {
-        ctx.fillStyle = (Math.floor(i / 5) % 2 === 0) ? '#d63384' : '#ffe4ef';
-        ctx.fillRect(i, 59, 1, 5);
+      const hr = e.type === 'mom' ? 10 : 9;
+      if (Math.abs(p.wx - e.wx) < hr && Math.abs(p.y - e.y) < hr) {
+        if (p.ptype === 'cake') {
+          e.frozenTimer = 240; // 4s — distracted eating
+          splat(e.wx, e.y, 8, ['#c8842a', '#f5dda0', '#fff']);
+        } else {
+          e.hp--;
+          e.frozenTimer = 90;
+          if (e.type === 'dad' || e.type === 'mom') e.chargeState = 'patrol';
+          splat(e.wx, e.y);
+          if (e.hp <= 0) { splat(e.wx, e.y, 12); enemies.splice(j, 1); score += e.score || 100; }
+        }
+        projs.splice(i, 1); hit = true; break;
       }
-      ctx.fillStyle = '#a61e4d';
-      ctx.fillRect(0, 63, 30, 1); // awning bottom edge
-
-      // Storefront window (warm lit)
-      ctx.fillStyle = '#ffe8c8';
-      ctx.fillRect(2, 65, 16, 14);
-      ctx.fillStyle = '#fffbee';
-      ctx.fillRect(3, 66, 14, 12);
-
-      // Pink scoop cone in window
-      ctx.fillStyle = '#c68642';
-      ctx.fillRect(5, 72, 4, 6);   // wafer
-      ctx.fillStyle = '#ffb3c6';
-      ctx.fillRect(4, 67, 6, 5);   // pink scoop
-
-      // Mint scoop cone in window
-      ctx.fillStyle = '#c68642';
-      ctx.fillRect(13, 72, 4, 6);  // wafer
-      ctx.fillStyle = '#a8e6cf';
-      ctx.fillRect(12, 67, 6, 5);  // mint scoop
-
-      // Door (dark wood, pink trim, gold knob)
-      ctx.fillStyle = '#2c1a07';
-      ctx.fillRect(20, 72, 9, GROUND_Y - 72);
-      ctx.fillStyle = '#ff3c8e';
-      ctx.fillRect(20, 71, 9, 1);
-      ctx.fillStyle = '#ffd700';
-      ctx.fillRect(24, 80, 2, 2);
-
-      // Rooftop ice cream cone ornament
-      ctx.fillStyle = '#c68642';
-      ctx.fillRect(10, 42, 5, 2);  // cone base
-      ctx.fillRect(11, 40, 3, 2);  // cone mid
-      ctx.fillRect(12, 38, 1, 2);  // cone tip
-      ctx.fillStyle = '#ffb3c6';
-      ctx.fillRect(10, 34, 5, 5);  // scoop
-      ctx.fillRect(11, 33, 3, 1);  // scoop top
-      ctx.fillStyle = '#e63946';
-      ctx.fillRect(12, 32, 1, 1);  // cherry
     }
+    if (hit) continue;
+  }
 
-    // --- Game loop ---
-    let tick = 0;
-    function update() {
-      player.vx = 0;
-      if (keys.left)  player.vx = -SPEED;
-      if (keys.right) player.vx =  SPEED;
+  // ── Enemy AI ──────────────────────────────────────────────────────────
+  for (const e of enemies) {
+    if (e.frozenTimer > 0) { e.frozenTimer--; continue; }
 
-      player.x += player.vx;
-      player.x = Math.max(0, Math.min(W - 16 * PX, player.x));
+    const dx = player.x - e.wx, dy = player.y - e.y;
+    const dist = Math.hypot(dx, dy);
 
-      // Animation
-      if (player.vx > 0) player.facing = 'walkR';
-      else if (player.vx < 0) player.facing = 'walkL';
-      else player.facing = 'idle';
+    if (e.type === 'dad' || e.type === 'mom') {
+      const warnDist  = e.type === 'mom' ? 90 : 75;
+      const baseChSpd = e.type === 'mom' ? 2.2 : 3.0;
+      // Mom gets faster as HP drops
+      const chSpd = e.type === 'mom' ? baseChSpd + (1 - e.hp / e.maxHp) * 1.8 : baseChSpd;
 
-      player.animTimer++;
-      if (player.animTimer >= player.animSpeed) {
-        player.animTimer = 0;
-        const frames = FRAMES[player.facing];
-        player.animFrame = (player.animFrame + 1) % frames.length;
+      if (e.chargeState === 'patrol') {
+        if (dist > 0) { e.wx += (dx / dist) * e.speed; e.y += (dy / dist) * e.speed; }
+        if (dist < warnDist) { e.chargeState = 'warn'; e.warnTimer = 52; }
+
+      } else if (e.chargeState === 'warn') {
+        e.warnTimer--;
+        if (e.warnTimer <= 0) {
+          e.chargeState = 'charge';
+          e.chargeTimer = 55;
+          const d2 = Math.hypot(dx, dy);
+          e.chargeVx = (dx / d2) * chSpd;
+          e.chargeVy = (dy / d2) * chSpd;
+        }
+
+      } else if (e.chargeState === 'charge') {
+        e.wx += e.chargeVx; e.y += e.chargeVy;
+        e.chargeTimer--;
+        e.y = Math.max(G_TOP + 8, Math.min(G_BOT - 8, e.y));
+        if (e.chargeTimer <= 0 || e.wx < 5 || e.wx > LEVEL_W - 5) e.chargeState = 'patrol';
       }
-      // Reset frame index when switching animation
-      tick++;
+
+    } else if (e.type === 'guard') {
+      if (dist < 65) {
+        if (dist > 0) { e.wx += (dx / dist) * e.speed; e.y += (dy / dist) * e.speed; }
+      } else {
+        e.wx += e.patrolDir * e.speed * 0.7;
+        if (Math.abs(e.wx - e.patrolOrigin) > 44) e.patrolDir *= -1;
+      }
+
+    } else if (e.type === 'goose') {
+      if (dist > 0) { e.wx += (dx / dist) * e.speed; e.y += (dy / dist) * e.speed; }
     }
 
-    function render() {
-      drawBackground();
-      const frames = FRAMES[player.facing];
-      drawSprite(frames[player.animFrame % frames.length], Math.round(player.x), Math.round(player.y));
+    // Player contact damage
+    const contactR = e.type === 'mom' ? 11 : 10;
+    if (dist < contactR && player.iframes <= 0) {
+      player.hp--;
+      player.iframes = 80;
+      if (player.hp <= 0) state = 'dead';
     }
+  }
 
-    function loop() {
-      update();
-      render();
-      requestAnimationFrame(loop);
+  // ── Lawnmower hazard ──────────────────────────────────────────────────
+  for (const h of hazards) {
+    if (h.type !== 'mower') continue;
+    h.wx += h.vx;
+    if (h.wx > h.maxWx || h.wx < h.minWx) h.vx *= -1;
+    if (Math.abs(player.x - h.wx) < 16 && Math.abs(player.y - h.y) < 14 && player.iframes <= 0) {
+      player.hp--;
+      player.iframes = 80;
+      if (player.hp <= 0) state = 'dead';
     }
+  }
 
-    loop();
-  </script>
+  // ── Particles ─────────────────────────────────────────────────────────
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.wx += p.vx; p.y += p.vy; p.life--;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+
+function startGame() {
+  Object.assign(player, { x: 55, y: LH / 2, angle: 0, hp: 5, heat: 0, fireCd: 0, iframes: 0, cakes: 0, cakeCd: 0 });
+  projs = []; enemies = []; hazards = []; items = []; particles = [];
+  camX = 0; score = 0; tick = 0; spawnIdx = 0;
+  state = 'playing';
+}
+
+// ── RENDER ────────────────────────────────────────────────────────────────
+function render() {
+  if (state === 'title') { drawTitle(); return; }
+
+  ctx.fillStyle = '#7ec8e3';
+  ctx.fillRect(0, 0, LW, LH);
+  drawBg();
+
+  for (const item of items) drawItem(item);
+  for (const p of projs)   drawProjectile(p);
+
+  const ents = [
+    ...enemies.map(e  => ({ draw: () => drawEnemy(e),   y: e.y  })),
+    ...hazards.map(h  => ({ draw: () => drawHazard(h),  y: h.y  })),
+    { draw: drawPlayer, y: player.y },
+  ].sort((a, b) => a.y - b.y);
+  for (const e of ents) e.draw();
+
+  drawParticles();
+  drawHUD();
+
+  if (state === 'dead') drawOverlay(
+    ['GAME OVER', 'SCORE: ' + score],
+    ['#ff4466', '#ffdd57']
+  );
+  if (state === 'win')  drawOverlay(
+    ['SECTION CLEAR!', 'SCORE: ' + score, 'THE PARK AWAITS...'],
+    ['#00ff66', '#ffdd57', '#aaffaa']
+  );
+}
+
+canvas.addEventListener('pointerdown', () => {
+  if (state === 'dead' || state === 'win') startGame();
+});
+
+// ── LOOP ──────────────────────────────────────────────────────────────────
+(function loop() { update(); render(); requestAnimationFrame(loop); })();
+</script>
 </body>
 </html>
