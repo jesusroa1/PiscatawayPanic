@@ -30,6 +30,9 @@ const ctx    = canvas.getContext('2d');
 const LW = 320, LH = 180;
 canvas.width = LW; canvas.height = LH;
 
+const bgImg = new Image();
+bgImg.src = 'bg.png';
+
 let canvasRect = canvas.getBoundingClientRect();
 function resize() {
   const s = Math.min(window.innerWidth / LW, window.innerHeight / LH);
@@ -159,58 +162,22 @@ function px(x, y, w, h, color) {
 
 // ── BACKGROUND ────────────────────────────────────────────────────────────
 function drawBg() {
-  // Afternoon sky
-  px(0, 0, LW, G_TOP, '#7ec8e3');
+  if (bgImg.complete && bgImg.naturalWidth > 0) {
+    ctx.drawImage(bgImg, -camX, 0, LEVEL_W, LH);
+  } else {
+    // Fallback while image loads
+    px(0, 0, LW, G_TOP, '#7ec8e3');
+    px(0, G_TOP, LW, LH - G_TOP, '#4a4a58');
+  }
 
-  // Sun (fixed on screen, top-right)
-  ctx.fillStyle = '#ffee44';
-  ctx.beginPath();
-  ctx.arc(LW - 20, 14, 9, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Ground zones: parking lot → road → park grass
-  const z1 = Math.round(480  - camX); // end of Section 1 asphalt
-  const z2 = Math.round(950  - camX); // end of Section 2 road
-  if (z1 > 0)              px(0,             G_TOP, Math.min(z1, LW), LH - G_TOP, '#4a4a58');
-  if (z1 < LW && z2 > 0) { const rx = Math.max(0, z1); px(rx, G_TOP, Math.min(z2, LW) - rx, LH - G_TOP, '#3a3a4a'); }
-  if (z2 < LW)             px(Math.max(0, z2), G_TOP, LW, LH - G_TOP, '#2a5a18');
-
-  // Road centre dashes (Section 2)
+  // Road centre dashes overlay (Section 2, wx 480–950)
   const roadMid = G_TOP + (G_BOT - G_TOP) / 2;
   for (let d = Math.max(480, Math.floor(camX / 24) * 24); d < Math.min(950, camX + LW); d += 24) {
     const dsx = Math.round(d - camX);
     if (dsx > -12 && dsx < LW) px(dsx, roadMid - 1, 12, 2, '#ffdd57');
   }
 
-  // Sidewalk line
-  px(0, G_TOP, LW, 3, '#888899');
-
-  // Petrucci's building (world 0–120)
-  const bx = Math.round(-camX);
-  if (bx + 120 > 0 && bx < LW) drawPetruccis(bx);
-
-  // Parked cars in lot
-  for (const cwx of [300, 360, 425]) {
-    const csx = Math.round(cwx - camX);
-    if (csx > -32 && csx < LW + 10) drawCar(csx, G_TOP + 10);
-  }
-
-  // Park fence (world 945–1010)
-  for (let i = 0; i < 65; i += 9) {
-    const fx = Math.round(945 + i - camX);
-    if (fx > -6 && fx < LW) {
-      px(fx, G_TOP, 3, 22, '#7a5c1a');
-      px(fx, G_TOP + 7, 9, 2, '#7a5c1a');
-    }
-  }
-
-  // Park trees
-  for (const tx of [970, 1035, 1095, 1155, 1210]) {
-    const sx = Math.round(tx - camX);
-    if (sx > -22 && sx < LW + 22) drawTree(sx, G_TOP + 14);
-  }
-
-  // Park gate (world 1148)
+  // Park gate overlay (world 1148)
   const gx = Math.round(1148 - camX);
   if (gx > -58 && gx < LW + 10) {
     px(gx,      G_TOP, 5, 50, '#6b4a12');
