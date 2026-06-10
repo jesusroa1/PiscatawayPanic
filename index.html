@@ -56,6 +56,29 @@
       border-radius: 8px; display: flex; align-items: center; justify-content: center;
       touch-action: manipulation; -webkit-tap-highlight-color: transparent; line-height: 1;
     }
+    #ai-harness {
+      position: fixed; top: 54px; right: 8px; z-index: 998;
+      width: 204px; display: flex; flex-direction: column; gap: 4px;
+    }
+    #ai-command-input {
+      width: 100%; background: rgba(0,0,0,0.84); border: 1px solid #2a6a2a;
+      color: #88ff88; font-size: 10px; padding: 5px 7px; border-radius: 4px;
+      outline: none; font-family: 'Courier New', monospace; box-sizing: border-box;
+    }
+    #ai-command-input:focus { border-color: #44ff44; box-shadow: 0 0 5px rgba(68,255,68,0.35); }
+    #ai-command-input::placeholder { color: #3a6a3a; font-style: italic; }
+    #ai-command-submit {
+      background: rgba(0,72,0,0.80); border: 1px solid #2a6a2a; color: #88ff88;
+      font-size: 9px; padding: 3px 0; border-radius: 4px; cursor: pointer;
+      font-family: 'Courier New', monospace; letter-spacing: 0.05em;
+    }
+    #ai-command-submit:hover { background: rgba(0,110,0,0.88); border-color: #44ff44; }
+    #ai-debug-readout {
+      background: rgba(0,0,0,0.82); border: 1px solid #1a4a1a;
+      color: #66dd66; font-size: 9px; padding: 5px 7px; border-radius: 4px;
+      white-space: pre; font-family: 'Courier New', monospace; line-height: 1.6;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
@@ -71,6 +94,11 @@
   </div>
 </div>
 <button id="toggle-btn" title="Toggle orientation">↕</button>
+<div id="ai-harness">
+  <input id="ai-command-input" type="text" placeholder="go right 50 pixels" autocomplete="off" spellcheck="false">
+  <button id="ai-command-submit">▶ SEND</button>
+  <div id="ai-debug-readout"></div>
+</div>
 <script>
 // ── SETUP ────────────────────────────────────────────────────────────────
 const canvas = document.getElementById('game');
@@ -130,6 +158,14 @@ const player = {
 
 let projs = [], enemies = [], hazards = [], items = [], particles = [], spawnIdx = 0;
 
+// ── AI COMMAND STATE ──────────────────────────────────────────────────────
+const aiCmd = {
+  lastCommand: '', lastResult: '',
+  pendingMove: null, // { dx, dy }
+  fireSS: false, fireFC: false,
+  selectedWeapon: 'softserve',
+};
+
 // Spawn table — sorted by wx so trySpawn works correctly
 const SPAWNS = [
   // ── Section 1: Petrucci's Parking Lot (tutorial) ──────────────────────
@@ -160,8 +196,14 @@ const SPAWNS = [
 
 // ── INPUT ─────────────────────────────────────────────────────────────────
 const keys = {};
-document.addEventListener('keydown', e => { keys[e.key] = true;  });
-document.addEventListener('keyup',   e => { keys[e.key] = false; });
+document.addEventListener('keydown', e => {
+  if (document.activeElement && document.activeElement.id === 'ai-command-input') return;
+  keys[e.key] = true;
+});
+document.addEventListener('keyup', e => {
+  if (document.activeElement && document.activeElement.id === 'ai-command-input') return;
+  keys[e.key] = false;
+});
 
 const joy    = { active: false, id: -1, ox: 0, oy: 0, dx: 0, dy: 0 };
 const btnSS  = { active: false, id: -1 }; // soft serve
@@ -219,6 +261,8 @@ const joyRing    = document.getElementById('joy-ring');
 const joyKnob    = document.getElementById('joy-knob');
 const fireBtnEl  = document.getElementById('fire-btn');
 const cakeBtnEl  = document.getElementById('cake-btn');
+const aiInputEl  = document.getElementById('ai-command-input');
+const aiSubmitEl = document.getElementById('ai-command-submit');
 const extJoy     = { id: -1, ox: 0, oy: 0 };
 
 function updateJoyVis() {
@@ -698,6 +742,101 @@ function drawOverlay(lines, colors) {
   ctx.textAlign = 'left';
 }
 
+// ── AI HARNESS ────────────────────────────────────────────────────────────
+function parseAICommand(raw) {
+  const cmd = raw.trim().toLowerCase();
+  aiCmd.lastCommand = raw.trim();
+
+  // Movement: "go right 50 pixels", "move up 30", etc.
+  const moveMatch = cmd.match(/^(?:go|move)\s+(right|left|up|down)\s+(\d+(?:\.\d+)?)/);
+  if (moveMatch) {
+    const dir = moveMatch[1], dist = parseFloat(moveMatch[2]);
+    const dx = dir === 'right' ? dist : dir === 'left'  ? -dist : 0;
+    const dy = dir === 'down'  ? dist : dir === 'up'    ? -dist : 0;
+    aiCmd.pendingMove = { dx, dy };
+    aiCmd.lastResult  = `moving ${dir} ${dist}px`;
+    return;
+  }
+
+  // Fire soft serve: "fire", "fire weapon", "fire softserve", "shoot"
+  if (/^(fire(\s+(weapon|soft.?serve|ss))?|shoot)$/.test(cmd)) {
+    aiCmd.fireSS     = true;
+    aiCmd.lastResult = 'fire softserve';
+    return;
+  }
+
+  // Fire funnel cake: "fire cake", "use cake", "throw cake"
+  if (/^(fire\s+cake|use\s+cake|throw\s+cake)$/.test(cmd)) {
+    aiCmd.fireFC     = true;
+    aiCmd.lastResult = 'fire cake';
+    return;
+  }
+
+  // Swap weapon
+  if (/^(swap(\s+weapon)?)$/.test(cmd)) {
+    aiCmd.selectedWeapon = aiCmd.selectedWeapon === 'softserve' ? 'cake' : 'softserve';
+    aiCmd.lastResult     = 'weapon: ' + aiCmd.selectedWeapon;
+    return;
+  }
+
+  // Select weapon: "select cake", "select softserve"
+  const selMatch = cmd.match(/^select\s+(softserve|soft.?serve|ss|cake|funnel.?cake|fc)$/);
+  if (selMatch) {
+    aiCmd.selectedWeapon = /cake/.test(selMatch[1]) ? 'cake' : 'softserve';
+    aiCmd.lastResult     = 'weapon: ' + aiCmd.selectedWeapon;
+    return;
+  }
+
+  // Start / restart game
+  if (/^start(\s+game)?$/.test(cmd)) {
+    startGame();
+    aiCmd.lastResult = 'game started';
+    return;
+  }
+
+  aiCmd.lastResult = 'unknown: "' + cmd + '"';
+}
+
+function updateAIDebug() {
+  const el = document.getElementById('ai-debug-readout');
+  if (!el) return;
+  const rx = Math.round(player.x), ry = Math.round(player.y);
+  el.setAttribute('data-state',        state);
+  el.setAttribute('data-x',            rx);
+  el.setAttribute('data-y',            ry);
+  el.setAttribute('data-hp',           player.hp);
+  el.setAttribute('data-max-hp',       player.maxHp);
+  el.setAttribute('data-weapon',       aiCmd.selectedWeapon);
+  el.setAttribute('data-heat',         Math.round(player.heat));
+  el.setAttribute('data-cakes',        player.cakes);
+  el.setAttribute('data-score',        score);
+  el.setAttribute('data-last-command', aiCmd.lastCommand);
+  el.setAttribute('data-last-result',  aiCmd.lastResult);
+  el.textContent = [
+    `state:  ${state}`,
+    `x: ${String(rx).padStart(4)}   y: ${String(ry).padStart(3)}`,
+    `hp:     ${player.hp}/${player.maxHp}`,
+    `weapon: ${aiCmd.selectedWeapon}`,
+    `heat:   ${Math.round(player.heat)}/100${player.heat >= OVERHEAT ? ' OVRHEAT' : ''}`,
+    `cakes:  ${player.cakes}`,
+    `score:  ${score}`,
+    `cmd:    ${aiCmd.lastCommand || '—'}`,
+    `result: ${aiCmd.lastResult  || '—'}`,
+  ].join('\n');
+}
+
+function submitAICommand() {
+  const val = aiInputEl.value.trim();
+  if (!val) return;
+  parseAICommand(val);
+  aiInputEl.value = '';
+}
+aiInputEl.addEventListener('keydown', e => {
+  e.stopPropagation();
+  if (e.key === 'Enter') { e.preventDefault(); submitAICommand(); }
+});
+aiSubmitEl.addEventListener('click', submitAICommand);
+
 // ── GAME LOGIC ────────────────────────────────────────────────────────────
 function splat(wx, y, n = 6, cols = ['#ffb3c6', '#ffffff', '#ff88aa']) {
   for (let i = 0; i < n; i++) {
@@ -751,6 +890,15 @@ function update() {
   player.x = Math.max(10, Math.min(LEVEL_W - 10, player.x + mx * P_SPEED));
   player.y = Math.max(G_TOP + 8, Math.min(G_BOT - 8, player.y + my * P_SPEED));
 
+  // ── AI movement command ───────────────────────────────────────────────
+  if (aiCmd.pendingMove) {
+    const { dx, dy } = aiCmd.pendingMove;
+    player.x = Math.max(10, Math.min(LEVEL_W - 10, player.x + dx));
+    player.y = Math.max(G_TOP + 8, Math.min(G_BOT - 8, player.y + dy));
+    if (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01) player.angle = Math.atan2(dy, dx);
+    aiCmd.pendingMove = null;
+  }
+
   // ── Aim & fire angle ──────────────────────────────────────────────────
   let nearest = null, nearestD = Infinity;
   for (const e of enemies) {
@@ -764,7 +912,7 @@ function update() {
     : player.angle;
 
   // ── Soft serve fire ───────────────────────────────────────────────────
-  const wantSS = keys[' '] || keys['z'] || keys['x'] || btnSS.active;
+  const wantSS = keys[' '] || keys['z'] || keys['x'] || btnSS.active || aiCmd.fireSS;
   if (wantSS && player.heat < OVERHEAT && player.fireCd <= 0) {
     projs.push({ ptype: 'softserve',
       wx: player.x + Math.cos(fa) * 15, y: player.y + Math.sin(fa) * 15,
@@ -772,9 +920,10 @@ function update() {
     player.heat  = Math.min(OVERHEAT, player.heat + HEAT_GAIN);
     player.fireCd = SS_FIRE_CD;
   }
+  aiCmd.fireSS = false;
 
   // ── Funnel cake throw ─────────────────────────────────────────────────
-  const wantFC = (keys['f'] || keys['F'] || btnFC.active) && player.cakes > 0;
+  const wantFC = (keys['f'] || keys['F'] || btnFC.active || aiCmd.fireFC) && player.cakes > 0;
   if (wantFC && player.cakeCd <= 0) {
     projs.push({ ptype: 'cake',
       wx: player.x + Math.cos(fa) * 15, y: player.y + Math.sin(fa) * 15,
@@ -782,6 +931,7 @@ function update() {
     player.cakes--;
     player.cakeCd = CAKE_CD;
   }
+  aiCmd.fireFC = false;
 
   if (player.fireCd  > 0) player.fireCd--;
   if (player.cakeCd  > 0) player.cakeCd--;
@@ -958,6 +1108,8 @@ function render() {
     ['SECTION CLEAR!', 'SCORE: ' + score, 'THE PARK AWAITS...'],
     ['#00ff66', '#ffdd57', '#aaffaa']
   );
+
+  updateAIDebug();
 }
 
 canvas.addEventListener('pointerdown', () => {
