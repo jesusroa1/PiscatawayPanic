@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Piscataway Panic</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
@@ -19,23 +19,73 @@
       touch-action: none;
     }
     canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+    body.vertical { flex-direction: column; justify-content: center; align-items: center; padding-bottom: 200px; }
+    #ctrl-zone {
+      position: fixed; bottom: 0; left: 0; right: 0; height: 200px;
+      display: none; flex-direction: row;
+      background: #0d0d0d; border-top: 1px solid #222; touch-action: none;
+      padding-bottom: env(safe-area-inset-bottom, 0);
+    }
+    body.vertical #ctrl-zone { display: flex; }
+    #joy-area { flex: 1; position: relative; overflow: hidden; }
+    #joy-ring {
+      position: absolute; width: 84px; height: 84px; border-radius: 50%;
+      border: 2.5px solid rgba(255,255,255,0.22); display: none; pointer-events: none;
+      transform: translate(-50%,-50%);
+    }
+    #joy-knob {
+      position: absolute; width: 40px; height: 40px; border-radius: 50%;
+      background: rgba(255,255,255,0.32); display: none; pointer-events: none;
+      transform: translate(-50%,-50%);
+    }
+    #btns-area { width: 44%; display: flex; flex-direction: column; padding: 14px 14px 14px 0; gap: 10px; }
+    .ctrl-btn {
+      flex: 1; border-radius: 14px; display: flex; align-items: center; justify-content: center;
+      font-family: 'Press Start 2P', monospace; font-size: 12px; cursor: pointer;
+      user-select: none; touch-action: none; border: 2px solid;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #fire-btn { background: rgba(255,50,50,0.15); border-color: rgba(255,80,80,0.45); color: #ff9090; }
+    #fire-btn.active { background: rgba(255,50,50,0.42); }
+    #cake-btn { background: rgba(200,132,42,0.15); border-color: rgba(200,132,42,0.45); color: #f5dda0; }
+    #cake-btn.active { background: rgba(200,132,42,0.42); }
+    #toggle-btn {
+      position: fixed; top: 8px; right: 8px; z-index: 999;
+      background: rgba(0,0,0,0.72); border: 1px solid #3a3a3a; color: #ccc;
+      font-size: 18px; width: 38px; height: 38px; cursor: pointer;
+      border-radius: 8px; display: flex; align-items: center; justify-content: center;
+      touch-action: manipulation; -webkit-tap-highlight-color: transparent; line-height: 1;
+    }
   </style>
 </head>
 <body>
 <canvas id="game"></canvas>
+<div id="ctrl-zone">
+  <div id="joy-area">
+    <div id="joy-ring"></div>
+    <div id="joy-knob"></div>
+  </div>
+  <div id="btns-area">
+    <div id="cake-btn" class="ctrl-btn">CAKE</div>
+    <div id="fire-btn" class="ctrl-btn">FIRE</div>
+  </div>
+</div>
+<button id="toggle-btn" title="Toggle orientation">↕</button>
 <script>
 // ── SETUP ────────────────────────────────────────────────────────────────
 const canvas = document.getElementById('game');
 const ctx    = canvas.getContext('2d');
 const LW = 320, LH = 180;
 canvas.width = LW; canvas.height = LH;
+let verticalMode = false;
 
 const bgImg = new Image();
 bgImg.src = 'bg.png';
 
 let canvasRect = canvas.getBoundingClientRect();
 function resize() {
-  const s = Math.min(window.innerWidth / LW, window.innerHeight / LH);
+  const ctrlH = verticalMode ? 200 : 0;
+  const s = Math.min(window.innerWidth / LW, (window.innerHeight - ctrlH) / LH);
   canvas.style.width  = Math.floor(LW * s) + 'px';
   canvas.style.height = Math.floor(LH * s) + 'px';
   requestAnimationFrame(() => { canvasRect = canvas.getBoundingClientRect(); });
@@ -114,6 +164,7 @@ function onTouchStart(e) {
   e.preventDefault();
   touchSeen = true;
   canvasRect = canvas.getBoundingClientRect();
+  if (verticalMode) { if (state !== 'playing') startGame(); return; }
   for (const t of e.changedTouches) {
     const p = toLogical(t.clientX, t.clientY);
     if (state !== 'playing') { startGame(); return; }
@@ -153,6 +204,113 @@ canvas.addEventListener('touchmove',   onTouchMove,   { passive: false });
 canvas.addEventListener('touchend',    onTouchEnd,    { passive: false });
 canvas.addEventListener('touchcancel', onTouchEnd,    { passive: false });
 canvas.addEventListener('pointerdown', () => { if (!touchSeen && state !== 'playing') startGame(); });
+
+// ── VERTICAL MODE ────────────────────────────────────────────────────────
+const toggleBtn  = document.getElementById('toggle-btn');
+const joyArea    = document.getElementById('joy-area');
+const joyRing    = document.getElementById('joy-ring');
+const joyKnob    = document.getElementById('joy-knob');
+const fireBtnEl  = document.getElementById('fire-btn');
+const cakeBtnEl  = document.getElementById('cake-btn');
+const extJoy     = { id: -1, ox: 0, oy: 0 };
+
+function updateJoyVis() {
+  if (!joy.active) { joyRing.style.display = 'none'; joyKnob.style.display = 'none'; return; }
+  const maxR = 42;
+  joyRing.style.display = 'block';
+  joyRing.style.left = extJoy.ox + 'px';
+  joyRing.style.top  = extJoy.oy + 'px';
+  joyKnob.style.display = 'block';
+  joyKnob.style.left = (extJoy.ox + joy.dx * maxR) + 'px';
+  joyKnob.style.top  = (extJoy.oy + joy.dy * maxR) + 'px';
+}
+
+function onJoyTouchStart(e) {
+  e.preventDefault();
+  touchSeen = true;
+  if (state !== 'playing') { startGame(); return; }
+  for (const t of e.changedTouches) {
+    if (joy.active) continue;
+    const rect = joyArea.getBoundingClientRect();
+    Object.assign(joy, { active: true, id: t.identifier, dx: 0, dy: 0 });
+    extJoy.id = t.identifier;
+    extJoy.ox = t.clientX - rect.left;
+    extJoy.oy = t.clientY - rect.top;
+    updateJoyVis();
+  }
+}
+function onJoyTouchMove(e) {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (t.identifier !== extJoy.id) continue;
+    const rect = joyArea.getBoundingClientRect();
+    const dx = (t.clientX - rect.left) - extJoy.ox;
+    const dy = (t.clientY - rect.top)  - extJoy.oy;
+    const maxR = 42, r = Math.hypot(dx, dy);
+    joy.dx = r > maxR ? dx / r : dx / maxR;
+    joy.dy = r > maxR ? dy / r : dy / maxR;
+    updateJoyVis();
+  }
+}
+function onJoyTouchEnd(e) {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (t.identifier !== extJoy.id) continue;
+    joy.active = false; joy.dx = 0; joy.dy = 0; extJoy.id = -1;
+    updateJoyVis();
+  }
+}
+joyArea.addEventListener('touchstart',  onJoyTouchStart,  { passive: false });
+joyArea.addEventListener('touchmove',   onJoyTouchMove,   { passive: false });
+joyArea.addEventListener('touchend',    onJoyTouchEnd,    { passive: false });
+joyArea.addEventListener('touchcancel', onJoyTouchEnd,    { passive: false });
+
+function onFireTouchStart(e) {
+  e.preventDefault(); touchSeen = true;
+  if (state !== 'playing') { startGame(); return; }
+  for (const t of e.changedTouches) {
+    if (!btnSS.active) { btnSS.active = true; btnSS.id = t.identifier; fireBtnEl.classList.add('active'); }
+  }
+}
+function onFireTouchEnd(e) {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (t.identifier === btnSS.id) { btnSS.active = false; fireBtnEl.classList.remove('active'); }
+  }
+}
+fireBtnEl.addEventListener('touchstart',  onFireTouchStart, { passive: false });
+fireBtnEl.addEventListener('touchend',    onFireTouchEnd,   { passive: false });
+fireBtnEl.addEventListener('touchcancel', onFireTouchEnd,   { passive: false });
+
+function onCakeTouchStart(e) {
+  e.preventDefault(); touchSeen = true;
+  if (state !== 'playing') { startGame(); return; }
+  for (const t of e.changedTouches) {
+    if (!btnFC.active && player.cakes > 0) { btnFC.active = true; btnFC.id = t.identifier; cakeBtnEl.classList.add('active'); }
+  }
+}
+function onCakeTouchEnd(e) {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (t.identifier === btnFC.id) { btnFC.active = false; cakeBtnEl.classList.remove('active'); }
+  }
+}
+cakeBtnEl.addEventListener('touchstart',  onCakeTouchStart, { passive: false });
+cakeBtnEl.addEventListener('touchend',    onCakeTouchEnd,   { passive: false });
+cakeBtnEl.addEventListener('touchcancel', onCakeTouchEnd,   { passive: false });
+
+function setVerticalMode(v) {
+  verticalMode = v;
+  document.body.classList.toggle('vertical', v);
+  toggleBtn.textContent = v ? '↔' : '↕';
+  joy.active = false; joy.dx = 0; joy.dy = 0;
+  btnSS.active = false; btnFC.active = false;
+  fireBtnEl.classList.remove('active');
+  cakeBtnEl.classList.remove('active');
+  updateJoyVis();
+  resize();
+}
+toggleBtn.addEventListener('click', () => setVerticalMode(!verticalMode));
 
 // ── DRAW HELPERS ──────────────────────────────────────────────────────────
 function px(x, y, w, h, color) {
@@ -453,8 +611,8 @@ function drawHUD() {
     ctx.fillText('CAKE x' + player.cakes, LW - 58, 24);
   }
 
-  // Touch overlays
-  if (touchSeen) {
+  // Touch overlays (canvas-embedded zones — only in horizontal mode)
+  if (touchSeen && !verticalMode) {
     // Left: joystick zone
     ctx.fillStyle = 'rgba(255,255,255,0.04)';
     ctx.fillRect(0, LH - 70, LW / 2, 70);
@@ -773,6 +931,12 @@ function render() {
   drawParticles();
   drawHUD();
 
+  if (verticalMode) {
+    const hasCakes = player.cakes > 0;
+    cakeBtnEl.style.opacity = hasCakes ? '1' : '0.38';
+    cakeBtnEl.textContent   = hasCakes ? 'CAKE ×' + player.cakes : 'CAKE';
+  }
+
   if (state === 'dead') drawOverlay(
     ['GAME OVER', 'SCORE: ' + score],
     ['#ff4466', '#ffdd57']
@@ -789,6 +953,9 @@ canvas.addEventListener('pointerdown', () => {
 
 // ── LOOP ──────────────────────────────────────────────────────────────────
 (function loop() { update(); render(); requestAnimationFrame(loop); })();
+
+// Auto-enable vertical mode on portrait screens (TikTok brain default)
+if (window.innerHeight > window.innerWidth * 1.2) setVerticalMode(true);
 </script>
 </body>
 </html>
