@@ -82,6 +82,9 @@ let verticalMode = false;
 const bgImg = new Image();
 bgImg.src = 'bg.png';
 
+const gooseImg = new Image();
+gooseImg.src = 'goose_sprites.png';
+
 let canvasRect = canvas.getBoundingClientRect();
 function resize() {
   const ctrlH = verticalMode ? 200 : 0;
@@ -130,25 +133,29 @@ let projs = [], enemies = [], hazards = [], items = [], particles = [], spawnIdx
 // Spawn table — sorted by wx so trySpawn works correctly
 const SPAWNS = [
   // ── Section 1: Petrucci's Parking Lot (tutorial) ──────────────────────
-  { wx: 148, type: 'cake_item' },          // funnel cake on the counter
-  { wx: 200, type: 'mower' },              // Lawnmower Guy — non-killable hazard
-  { wx: 220, type: 'dad' },               // Radioactive Dad
-  { wx: 280, type: 'dad',   wy: 85  },
-  { wx: 320, type: 'guard'              },  // Zombie Crossing Guard
-  { wx: 370, type: 'dad',   wy: 135 },
+  { wx: 148, type: 'cake_item' },
+  { wx: 200, type: 'mower' },
+  { wx: 220, type: 'dad' },
+  { wx: 290, type: 'goose', wy: 95  },
+  { wx: 320, type: 'guard'          },
+  { wx: 390, type: 'goose', wy: 135 },
 
   // ── Section 2: South Washington Ave ───────────────────────────────────
   { wx: 510, type: 'goose'              },
-  { wx: 570, type: 'dad',   wy: 95  },
-  { wx: 630, type: 'goose', wy: 65  },
-  { wx: 690, type: 'dad',   wy: 135 },
-  { wx: 750, type: 'goose'              },
-  { wx: 820, type: 'dad',   wy: 100 },
-  { wx: 880, type: 'goose', wy: 145 },
+  { wx: 545, type: 'goose', wy: 75  },
+  { wx: 585, type: 'goose', wy: 145 },
+  { wx: 625, type: 'dad',   wy: 100 },
+  { wx: 660, type: 'goose'              },
+  { wx: 695, type: 'goose', wy: 60  },
+  { wx: 730, type: 'goose', wy: 140 },
+  { wx: 770, type: 'goose'              },
+  { wx: 810, type: 'goose', wy: 90  },
+  { wx: 850, type: 'goose', wy: 155 },
+  { wx: 895, type: 'goose'              },
 
   // ── Section 3: Johnson Park Gate ──────────────────────────────────────
-  { wx: 1010, type: 'guard'             },  // Park ranger blocking gate
-  { wx: 1065, type: 'mom'               },  // Radioactive Mom — mini-boss
+  { wx: 1010, type: 'guard'             },
+  { wx: 1065, type: 'mom'               },
 ];
 
 // ── INPUT ─────────────────────────────────────────────────────────────────
@@ -458,16 +465,22 @@ function drawEnemy(e) {
     px(7,  -8, 5, 5, '#ffffff');
 
   } else if (e.type === 'goose') {
-    // Canada goose
-    const bc = fr ? '#aaddff' : '#eeeeee';
-    px(-7, -3, 14, 7, bc);
-    px(-9, -8,  6, 7, fr ? '#2244aa' : '#111');
-    px(-13,-6,  5, 2, fr ? '#4477aa' : '#ff8800');
-    ctx.fillStyle = fr ? '#88ccff' : '#ff2222';
-    ctx.fillRect(-7, -7, 2, 2);
-    const f = Math.abs(Math.sin(tick * 0.35 + e.wx * 0.04)) * 3;
-    px(-7, -3 - f, 14, 2, '#ddd');
-    px(-7,  4 + f, 14, 2, '#ddd');
+    if (gooseImg.complete && gooseImg.naturalWidth > 0) {
+      const frame = Math.floor(tick / 8) % 4;
+      const row = player.x < e.wx ? 1 : 0;
+      ctx.drawImage(gooseImg, frame * 384, row * 341, 384, 341, -16, -13, 32, 26);
+      if (fr) { ctx.fillStyle = 'rgba(100,180,255,0.45)'; ctx.fillRect(-16, -13, 32, 26); }
+    } else {
+      const bc = fr ? '#aaddff' : '#eeeeee';
+      px(-7, -3, 14, 7, bc);
+      px(-9, -8,  6, 7, fr ? '#2244aa' : '#111');
+      px(-13,-6,  5, 2, fr ? '#4477aa' : '#ff8800');
+      ctx.fillStyle = fr ? '#88ccff' : '#ff2222';
+      ctx.fillRect(-7, -7, 2, 2);
+      const f = Math.abs(Math.sin(tick * 0.35 + e.wx * 0.04)) * 3;
+      px(-7, -3 - f, 14, 2, '#ddd');
+      px(-7,  4 + f, 14, 2, '#ddd');
+    }
 
   } else if (e.type === 'mom') {
     // Radioactive Mom — pink top, pushing stroller toward player
@@ -820,7 +833,7 @@ function update() {
           e.frozenTimer = 90;
           if (e.type === 'dad' || e.type === 'mom') e.chargeState = 'patrol';
           splat(e.wx, e.y);
-          if (e.hp <= 0) { splat(e.wx, e.y, 12); enemies.splice(j, 1); score += e.score || 100; }
+          if (e.hp <= 0) { splat(e.wx, e.y, e.type==='goose' ? 16 : 12, e.type==='goose' ? ['#fff','#ddd','#f5f5dc','#aaa'] : undefined); enemies.splice(j, 1); score += e.score || 100; }
         }
         projs.splice(i, 1); hit = true; break;
       }
