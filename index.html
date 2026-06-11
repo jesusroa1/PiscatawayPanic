@@ -1075,6 +1075,7 @@ function startGame() {
 
 // ── RENDER ────────────────────────────────────────────────────────────────
 function render() {
+  updateAIDebug(); // always update — keeps data-* attrs readable in all states
   if (state === 'title') { drawTitle(); return; }
 
   ctx.fillStyle = '#7ec8e3';
