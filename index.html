@@ -19,7 +19,7 @@
       touch-action: none;
     }
     canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
-    body.vertical { flex-direction: column; justify-content: center; align-items: center; padding-bottom: 200px; }
+    body.vertical { flex-direction: column; justify-content: flex-start; align-items: center; }
     #ctrl-zone {
       position: fixed; bottom: 0; left: 0; right: 0; height: 200px;
       display: none; flex-direction: row;
@@ -114,11 +114,30 @@ const gooseImg = new Image();
 gooseImg.src = 'goose_sprites.png';
 
 let canvasRect = canvas.getBoundingClientRect();
+
+// In portrait (vertical) mode the canvas is scaled to fill the available height
+// and panned horizontally each frame so the player stays screen-centered.
+function updateCanvasOffset() {
+  if (!verticalMode) { canvas.style.transform = ''; return; }
+  const s = (parseFloat(canvas.style.height) || 0) / LH;
+  const playerCanvasX = (player.x - camX) * s;
+  const tx = Math.round(LW * s / 2 - playerCanvasX);
+  canvas.style.transform = 'translateX(' + tx + 'px)';
+}
+
 function resize() {
-  const ctrlH = verticalMode ? 200 : 0;
-  const s = Math.min(window.innerWidth / LW, (window.innerHeight - ctrlH) / LH);
-  canvas.style.width  = Math.floor(LW * s) + 'px';
-  canvas.style.height = Math.floor(LH * s) + 'px';
+  if (verticalMode) {
+    const ctrlH = 200;
+    const s = (window.innerHeight - ctrlH) / LH;
+    canvas.style.width  = Math.round(LW * s) + 'px';
+    canvas.style.height = Math.round(LH * s) + 'px';
+    updateCanvasOffset();
+  } else {
+    const s = Math.min(window.innerWidth / LW, window.innerHeight / LH);
+    canvas.style.width  = Math.floor(LW * s) + 'px';
+    canvas.style.height = Math.floor(LH * s) + 'px';
+    canvas.style.transform = '';
+  }
   requestAnimationFrame(() => { canvasRect = canvas.getBoundingClientRect(); });
 }
 resize();
@@ -1075,6 +1094,7 @@ function startGame() {
 
 // ── RENDER ────────────────────────────────────────────────────────────────
 function render() {
+  updateCanvasOffset();
   updateAIDebug(); // always update — keeps data-* attrs readable in all states
   if (state === 'title') { drawTitle(); return; }
 
