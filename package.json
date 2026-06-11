@@ -1,0 +1,11 @@
+{
+  "name": "piscataway-panic-tests",
+  "version": "1.0.0",
+  "description": "Playwright automation tests for Piscataway Panic",
+  "scripts": {
+    "test": "node tests/movement-test.js"
+  },
+  "dependencies": {
+    "playwright": "^1.40.0"
+  }
+}
